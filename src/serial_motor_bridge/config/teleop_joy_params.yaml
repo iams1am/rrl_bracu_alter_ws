@@ -1,0 +1,34 @@
+teleop_twist_joy_node:
+  ros__parameters:
+    # Axis mappings (adjust based on your joystick)
+    # Common mappings:
+    # - Xbox/Logitech: Left stick Y = axis 1, Right stick X = axis 3
+    # - PS4: Left stick Y = axis 1, Right stick X = axis 2
+    
+    axis_linear:
+      x: 1  # Left stick Y-axis for forward/backward
+    axis_angular:
+      yaw: 3  # Right stick X-axis for rotation (use 0 for left stick X)
+    
+    # Scale factors for velocity
+    scale_linear:
+      x: 0.5  # Max linear velocity (m/s)
+    scale_angular:
+      yaw: 1.0  # Max angular velocity (rad/s)
+    
+    # Turbo mode (when holding turbo button)
+    scale_linear_turbo:
+      x: 1.0  # Turbo linear velocity (m/s)
+    scale_angular_turbo:
+      yaw: 2.0  # Turbo angular velocity (rad/s)
+    
+    # Button mappings
+    # Enable button must be held to drive
+    enable_button: 4  # Usually L1/LB button
+    enable_turbo_button: 5  # Usually R1/RB button
+    
+    # Set to true if you want inverted controls
+    # inverted_reverse: false
+    
+    # Publish rate
+    publish_stamped_twist: false

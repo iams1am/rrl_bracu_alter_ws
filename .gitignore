@@ -1,0 +1,30 @@
+# ROS/colcon generated artifacts
+build/
+install/
+log/
+.colcon/
+
+# Runtime/editor/cache files
+.agents/
+.codex/
+.rrl_git/
+.ros/
+__pycache__/
+*.py[cod]
+*.swp
+*.swo
+*~
+
+# Large/generated transient logs
+*.log
+*.pid
+
+# Python virtual environments
+.venv/
+venv/
+env/
+yoloenv/
+
+# Keep exports in the repository for mission examples/results.
+!exports/
+!exports/.gitkeep

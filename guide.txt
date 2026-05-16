@@ -1,0 +1,607 @@
+================================================================================
+BRACU ALTER RRL2026 FINAL ROS2 GUIDE
+RoboCup Rescue League 2026 Mapping + Object Detection Pipeline
+Workspace: /home/sbuntu/rrl_bracu_alter_ws
+================================================================================
+
+This guide is the final command reference for the tested pipeline:
+
+  RPLidar A3 + CMP10A/WIT IMU + Cartographer SLAM
+  Intel RealSense D435i + YOLOv8 object detection
+  Depth based object localization into map coordinates
+  CSV POI logger
+  RoboCup Rescue rulebook style GeoTIFF/PNG export
+
+
+================================================================================
+1. ONE-TIME OR AFTER-CODE-CHANGE SETUP
+================================================================================
+
+Open a terminal:
+
+  cd /home/sbuntu/rrl_bracu_alter_ws
+  source /opt/ros/jazzy/setup.bash
+  colcon build --symlink-install
+  source /home/sbuntu/rrl_bracu_alter_ws/install/setup.bash
+
+Faster rebuild for only our custom packages:
+
+  cd /home/sbuntu/rrl_bracu_alter_ws
+  source /opt/ros/jazzy/setup.bash
+  colcon build --symlink-install --packages-select \
+    rrl_interfaces cartographer_slam yolov8_detector object_localizer \
+    csv_logger rrl_bringup serial_motor_bridge
+  source /home/sbuntu/rrl_bracu_alter_ws/install/setup.bash
+
+Serial permission setup:
+
+  sudo usermod -a -G dialout $USER
+
+Important: log out and log back in after this command.
+
+Temporary serial permission fix for the current boot:
+
+  sudo chmod 666 /dev/ttyUSB0 /dev/ttyUSB1
+
+
+================================================================================
+2. HARDWARE CONNECTION ORDER AND DEVICE CHECKS
+================================================================================
+
+Recommended connection order:
+
+  1. Connect IMU first.
+  2. Connect RPLidar A3 second.
+  3. Connect Intel RealSense D435i third.
+
+In the tested setup:
+
+  IMU    -> /dev/imu_usb, symlink to /dev/ttyUSB0
+  Lidar  -> /dev/ttyUSB1
+  Camera -> Intel RealSense D435i, serial 241122073209
+
+Check serial devices:
+
+  ls -l /dev/imu_usb /dev/ttyUSB*
+
+Expected:
+
+  /dev/imu_usb -> ttyUSB0
+  /dev/ttyUSB0 exists
+  /dev/ttyUSB1 exists
+
+Check RealSense:
+
+  lsusb | egrep -i 'realsense|intel|10c4|silicon'
+  rs-enumerate-devices -s
+
+If the serial ports swap, still use the launch arguments below. Do not rely on
+the package defaults during competition.
+
+
+================================================================================
+3. EVERY TERMINAL: SOURCE ROS AND THE WORKSPACE
+================================================================================
+
+Run this in every new terminal before ROS commands:
+
+  source /opt/ros/jazzy/setup.bash
+  source /home/sbuntu/rrl_bracu_alter_ws/install/setup.bash
+
+
+================================================================================
+4. FINAL FULL PIPELINE RUN
+================================================================================
+
+Use these terminals in order.
+
+
+--------------------------------------------------------------------------------
+TERMINAL 1: Start mapping, sensors, YOLO, localization, and CSV logger
+--------------------------------------------------------------------------------
+
+  cd /home/sbuntu/rrl_bracu_alter_ws
+  source /opt/ros/jazzy/setup.bash
+  source /home/sbuntu/rrl_bracu_alter_ws/install/setup.bash
+
+  ros2 launch rrl_bringup rrl_bringup.launch.py \
+    lidar_serial_port:=/dev/ttyUSB1 \
+    imu_serial_port:=/dev/imu_usb \
+    team_name:="BracU ALTER" \
+    file_team_name:=BracUAlter \
+    country:=Bangladesh \
+    mission:=Prelim1 \
+    robot:=Alter \
+    mode:=T \
+    output_dir:=/home/sbuntu/rrl_bracu_alter_ws/exports
+
+This starts:
+
+  - RPLidar A3 on /dev/ttyUSB1
+  - IMU on /dev/imu_usb
+  - Static TFs for laser, IMU, and RealSense
+  - Cartographer 2D SLAM
+  - Occupancy grid publisher on /map
+  - Robot path publisher on /robot_path
+  - RealSense D435i color + aligned depth
+  - YOLOv8 detector using /home/sbuntu/rrl_bracu_alter_ws/models/best.pt
+  - Object localizer: YOLO bbox + depth + TF -> map x,y,z
+  - CSV logger: writes unique object detections into exports/
+
+Important:
+
+  rrl_bringup does not launch RViz. Start RViz separately in Terminal 2.
+
+
+--------------------------------------------------------------------------------
+TERMINAL 2: Start RViz separately
+--------------------------------------------------------------------------------
+
+  source /opt/ros/jazzy/setup.bash
+  source /home/sbuntu/rrl_bracu_alter_ws/install/setup.bash
+
+  rviz2 -d /home/sbuntu/rrl_bracu_alter_ws/install/cartographer_slam/share/cartographer_slam/rviz/cartographer_2d.rviz
+
+In RViz:
+
+  Fixed Frame: map
+
+If RViz says "Frame [map] does not exist", wait a few seconds. If it does not
+recover, check that Cartographer is running and that /scan and /imu/data are
+publishing.
+
+
+--------------------------------------------------------------------------------
+TERMINAL 3: Drive the robot
+--------------------------------------------------------------------------------
+
+  source /opt/ros/jazzy/setup.bash
+  source /home/sbuntu/rrl_bracu_alter_ws/install/setup.bash
+
+  ros2 launch serial_motor_bridge robot_teleop.launch.py
+
+Drive slowly enough for Cartographer to build a clean map.
+
+For a full rulebook map, move the robot. If the robot stays still, the exporter
+can only draw a small magenta start/path mark instead of a full path line.
+
+
+--------------------------------------------------------------------------------
+TERMINAL 4: Save the final GeoTIFF map
+--------------------------------------------------------------------------------
+
+When the run is finished, keep Terminal 1 running and export the map:
+
+  source /opt/ros/jazzy/setup.bash
+  source /home/sbuntu/rrl_bracu_alter_ws/install/setup.bash
+
+  MISSION=Prelim1
+  CSV=$(ls -t /home/sbuntu/rrl_bracu_alter_ws/exports/*-${MISSION}-*-pois.csv | head -1)
+  OUT=${CSV%-pois.csv}.tif
+
+  ros2 run cartographer_slam save_map_geotiff.py \
+    -o "$OUT" \
+    --team-name "BracU ALTER" \
+    --mission "$MISSION" \
+    --canvas-aspect 16:9 \
+    --rotate-map ccw \
+    --render-scale 12 \
+    --path-wait-sec 5 \
+    --pois-csv "$CSV"
+
+This creates:
+
+  $OUT
+  ${OUT%.tif}.png
+
+Example tested output:
+
+  /home/sbuntu/rrl_bracu_alter_ws/exports/RoboCup2026-BracUAlter-RulebookValidation-01-53-19.tif
+  /home/sbuntu/rrl_bracu_alter_ws/exports/RoboCup2026-BracUAlter-RulebookValidation-01-53-19.png
+  /home/sbuntu/rrl_bracu_alter_ws/exports/RoboCup2026-BracUAlter-RulebookValidation-01-53-19-pois.csv
+
+
+================================================================================
+5. CARTOGRAPHER ONLY, RVIZ SEPARATELY
+================================================================================
+
+Use this when you only want SLAM without the full object pipeline:
+
+Terminal 1:
+
+  cd /home/sbuntu/rrl_bracu_alter_ws
+  source /opt/ros/jazzy/setup.bash
+  source /home/sbuntu/rrl_bracu_alter_ws/install/setup.bash
+
+  ros2 launch cartographer_slam cartographer_2d.launch.py \
+    lidar_serial_port:=/dev/ttyUSB1 \
+    imu_serial_port:=/dev/imu_usb \
+    launch_rviz:=false
+
+Terminal 2:
+
+  source /opt/ros/jazzy/setup.bash
+  source /home/sbuntu/rrl_bracu_alter_ws/install/setup.bash
+
+  rviz2 -d /home/sbuntu/rrl_bracu_alter_ws/install/cartographer_slam/share/cartographer_slam/rviz/cartographer_2d.rviz
+
+RViz Fixed Frame:
+
+  map
+
+
+================================================================================
+6. RULEBOOK OUTPUT REQUIREMENTS IMPLEMENTED
+================================================================================
+
+The exporter follows the important RoboCup Rescue 2026 map rules:
+
+  - GeoTIFF .tif output
+  - PNG preview beside the GeoTIFF
+  - Filename text in dark blue
+  - Dark-blue walls/obstacles
+  - White/gray searched area confidence background
+  - Light/dark gray 1 m unexplored checkerboard
+  - Gray 0.5 m explored grid
+  - 1 m scale line and label
+  - X/Y orientation marker: X points up, Y points left
+  - Green initial robot position arrow
+  - Magenta robot path
+  - Red diamonds for real_object detections
+  - Detection number printed inside each object marker
+
+CSV format implemented:
+
+  "pois"
+  "1.3"
+  "BracU ALTER"
+  "Bangladesh"
+  "YYYY-MM-DD"
+  "HH:MM:SS"
+  "MissionName"
+  detection,time,type,name,x,y,z,robot,mode
+
+CSV filename format:
+
+  RoboCup2026-BracUAlter-MissionName-HH-MM-SS-pois.csv
+
+Important naming detail:
+
+  team_name:="BracU ALTER"      -> printed inside CSV header
+  file_team_name:=BracUAlter    -> used in filename without spaces
+
+
+================================================================================
+7. LIVE CHECK COMMANDS
+================================================================================
+
+List nodes:
+
+  ros2 node list
+
+List topics:
+
+  ros2 topic list
+
+Check lidar:
+
+  ros2 topic echo /scan --once --no-arr
+  ros2 topic hz /scan
+
+Check IMU:
+
+  ros2 topic echo /imu/data --once
+  ros2 topic hz /imu/data
+
+Check map:
+
+  ros2 topic echo /map --once --no-arr
+  ros2 topic hz /map
+
+Check robot path:
+
+  ros2 topic echo /robot_path --once
+
+Check RealSense color and depth:
+
+  ros2 topic echo /camera/camera/color/image_raw --once --no-arr
+  ros2 topic echo /camera/camera/aligned_depth_to_color/image_raw --once --no-arr
+  ros2 topic hz /camera/camera/color/image_raw
+  ros2 topic hz /camera/camera/aligned_depth_to_color/image_raw
+
+Check YOLO detections:
+
+  ros2 topic echo /yolo/detections --once
+
+Check localized objects going into the CSV:
+
+  ros2 topic echo /localization/objects --once
+
+Check object markers:
+
+  ros2 topic echo /localization/object_markers --once
+
+Check TF:
+
+  ros2 run tf2_ros tf2_echo map base_link
+  ros2 run tf2_ros tf2_echo map camera_camera_link
+  ros2 run tf2_tools view_frames
+
+Check generated files:
+
+  ls -lh /home/sbuntu/rrl_bracu_alter_ws/exports
+  cat /home/sbuntu/rrl_bracu_alter_ws/exports/*-pois.csv
+  identify /home/sbuntu/rrl_bracu_alter_ws/exports/*.png
+  identify /home/sbuntu/rrl_bracu_alter_ws/exports/*.tif
+
+
+================================================================================
+8. COMMON PROBLEMS AND FIXES
+================================================================================
+
+Problem: RViz says "Frame [map] does not exist".
+
+Fix:
+
+  Wait until Cartographer receives sensor data. Then check:
+
+    ros2 topic hz /scan
+    ros2 topic hz /imu/data
+    ros2 node list | grep cartographer
+
+  In RViz, use Fixed Frame:
+
+    map
+
+
+Problem: Map display warns "No map received".
+
+Fix:
+
+  Make sure the launch command uses the correct ports:
+
+    lidar_serial_port:=/dev/ttyUSB1
+    imu_serial_port:=/dev/imu_usb
+
+  Then check:
+
+    ros2 topic echo /map --once --no-arr
+
+
+Problem: IMU is not connected.
+
+Fix:
+
+  ls -l /dev/imu_usb /dev/ttyUSB*
+  sudo chmod 666 /dev/ttyUSB0 /dev/ttyUSB1
+  ros2 topic echo /imu/data --once
+  ros2 topic hz /imu/data
+
+  If /dev/imu_usb is missing, reconnect the IMU first, then reconnect lidar.
+
+
+Problem: RPLidar permission denied or wrong port.
+
+Fix:
+
+  sudo chmod 666 /dev/ttyUSB0 /dev/ttyUSB1
+  ls -l /dev/ttyUSB*
+
+  Use:
+
+    lidar_serial_port:=/dev/ttyUSB1
+
+
+Problem: RealSense not detected.
+
+Fix:
+
+  rs-enumerate-devices -s
+  lsusb | egrep -i 'realsense|intel'
+
+  Replug the camera into a USB 3 port. The tested camera appeared as:
+
+    Intel RealSense D435I, serial 241122073209
+
+
+Problem: YOLO says ultralytics is missing.
+
+Fix:
+
+  The node tries the fallback environment:
+
+    /home/sbuntu/yoloenv/lib/python3.12/site-packages
+
+  If YOLO still fails, activate/check that environment and make sure
+  ultralytics is installed there.
+
+
+Problem: No objects are detected.
+
+Fix:
+
+  Check camera stream:
+
+    ros2 topic hz /camera/camera/color/image_raw
+
+  Check YOLO:
+
+    ros2 topic echo /yolo/detections --once
+
+  Put one of the trained objects in the D435i view. The final validation run
+  detected Backpack, fire_extinguisher, and baby_doll_face.
+
+
+Problem: Object is detected but not localized into x,y,z.
+
+Fix:
+
+  Check aligned depth:
+
+    ros2 topic hz /camera/camera/aligned_depth_to_color/image_raw
+
+  Check TF:
+
+    ros2 run tf2_ros tf2_echo map camera_camera_link
+    ros2 run tf2_ros tf2_echo map base_link
+
+  Check localizer output:
+
+    ros2 topic echo /localization/objects --once
+
+
+Problem: CSV has wrong team name format.
+
+Fix:
+
+  Launch with both names:
+
+    team_name:="BracU ALTER"
+    file_team_name:=BracUAlter
+
+  The CSV header should say:
+
+    "BracU ALTER"
+
+  The filename should say:
+
+    RoboCup2026-BracUAlter-...
+
+
+Problem: Duplicate detections appear.
+
+Fix:
+
+  The logger suppresses repeated detections with the same object type and name.
+  In the rulebook, only the first instance of each unique object is scored.
+
+
+Problem: Map is too small or low resolution.
+
+Fix:
+
+  Export with:
+
+    --render-scale 12
+    --canvas-aspect 16:9
+
+  Tested final output was 4566x2568 pixels.
+
+
+Problem: Map is vertical or wrong orientation.
+
+Fix:
+
+  Export with:
+
+    --rotate-map ccw
+
+  This makes the RRL orientation marker correct:
+
+    X points up
+    Y points left
+
+
+Problem: Filename text overlaps an object marker.
+
+Fix:
+
+  This was fixed in save_map_geotiff.py by reducing the title font size.
+  Rebuild after pulling/editing:
+
+    colcon build --symlink-install --packages-select cartographer_slam
+
+
+Problem: GeoTIFF export misses robot path.
+
+Fix:
+
+  Keep the main launch running while exporting and use:
+
+    --path-wait-sec 5
+
+  Also move the robot during the run. If the robot does not move, only a small
+  magenta start/path mark can be drawn.
+
+
+Problem: ImageMagick identify shows GeoTIFF tag warnings.
+
+Fix:
+
+  These warnings can happen with the Pillow fallback GeoTIFF writer and are not
+  automatically fatal. Confirm the TIFF opens and the PNG preview is correct.
+  Installing GDAL/rasterio is optional if a stricter GeoTIFF writer is needed.
+
+
+================================================================================
+9. STOPPING THE SYSTEM
+================================================================================
+
+Preferred:
+
+  Press Ctrl+C in each launch terminal.
+
+If a ROS process remains:
+
+  pkill -INT -f 'ros2 launch rrl_bringup'
+  pkill -INT -f 'cartographer_node|rplidar_node|realsense2_camera_node|yolo_node|object_localizer|csv_logger|path_tracker.py'
+
+Verify nothing remains:
+
+  pgrep -af '[r]os2 launch rrl_bringup|[c]artographer_node|[r]plidar_node|[r]ealsense2_camera_node|[y]olo_node|[o]bject_localizer|[c]sv_logger|[p]ath_tracker.py'
+
+
+================================================================================
+10. FINAL VALIDATION COMMAND SET
+================================================================================
+
+Use this block for a final rulebook-style test.
+
+Terminal 1:
+
+  cd /home/sbuntu/rrl_bracu_alter_ws
+  source /opt/ros/jazzy/setup.bash
+  source /home/sbuntu/rrl_bracu_alter_ws/install/setup.bash
+
+  ros2 launch rrl_bringup rrl_bringup.launch.py \
+    lidar_serial_port:=/dev/ttyUSB1 \
+    imu_serial_port:=/dev/imu_usb \
+    team_name:="BracU ALTER" \
+    file_team_name:=BracUAlter \
+    country:=Bangladesh \
+    mission:=RulebookValidation \
+    robot:=Alter \
+    mode:=T \
+    output_dir:=/home/sbuntu/rrl_bracu_alter_ws/exports
+
+Terminal 2:
+
+  source /opt/ros/jazzy/setup.bash
+  source /home/sbuntu/rrl_bracu_alter_ws/install/setup.bash
+  rviz2 -d /home/sbuntu/rrl_bracu_alter_ws/install/cartographer_slam/share/cartographer_slam/rviz/cartographer_2d.rviz
+
+Terminal 3, after mapping/detection:
+
+  source /opt/ros/jazzy/setup.bash
+  source /home/sbuntu/rrl_bracu_alter_ws/install/setup.bash
+
+  MISSION=RulebookValidation
+  CSV=$(ls -t /home/sbuntu/rrl_bracu_alter_ws/exports/*-${MISSION}-*-pois.csv | head -1)
+  OUT=${CSV%-pois.csv}.tif
+
+  ros2 run cartographer_slam save_map_geotiff.py \
+    -o "$OUT" \
+    --team-name "BracU ALTER" \
+    --mission "$MISSION" \
+    --canvas-aspect 16:9 \
+    --rotate-map ccw \
+    --render-scale 12 \
+    --path-wait-sec 5 \
+    --pois-csv "$CSV"
+
+  cat "$CSV"
+  ls -lh "$CSV" "$OUT" "${OUT%.tif}.png"
+
+================================================================================
+END OF GUIDE
+================================================================================

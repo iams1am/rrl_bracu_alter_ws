@@ -1,0 +1,19 @@
+serial_motor_bridge:
+  ros__parameters:
+    # Serial port configuration
+    serial_port: "/dev/ttyACM0"  # Arduino Uno native USB port
+    baud_rate: 115200
+    
+    # Robot parameters
+    wheel_base: 0.3  # Distance between wheels in meters
+    
+    # Speed limits
+    max_linear_speed: 1.0   # Maximum linear speed in m/s
+    max_angular_speed: 2.0  # Maximum angular speed in rad/s
+    max_pwm: 255            # Maximum PWM value (0-255)
+    
+    # Topic configuration
+    cmd_vel_topic: "/cmd_vel"
+    
+    # Safety timeout - stops motors if no command received
+    timeout: 0.5  # seconds
